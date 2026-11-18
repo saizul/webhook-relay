@@ -1,0 +1,29 @@
+# docker compose -f examples/docker-compose.yml up -d
+# Put the secrets in examples/.env (never commit it), for example:
+#   GITHUB_WEBHOOK_SECRET=...
+#   STRIPE_WEBHOOK_SECRET=...
+#   WEBHOOK_RELAY_API_TOKEN=...
+services:
+  webhook-relay:
+    image: ghcr.io/saizul/webhook-relay:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"           # put a TLS-terminating reverse proxy in front in production
+    volumes:
+      - ./config.yaml:/config/config.yaml:ro
+      - relay-data:/data
+    environment:
+      WEBHOOK_RELAY_LOG_LEVEL: info
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:?set it in .env}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:?set it in .env}
+      SHOPIFY_WEBHOOK_SECRET: ${SHOPIFY_WEBHOOK_SECRET:?set it in .env}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:?set it in .env}
+      PARTNER_WEBHOOK_SECRET: ${PARTNER_WEBHOOK_SECRET:?set it in .env}
+      RELAY_SIGNING_SECRET: ${RELAY_SIGNING_SECRET:?set it in .env}
+      WEBHOOK_RELAY_API_TOKEN: ${WEBHOOK_RELAY_API_TOKEN:-}
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  relay-data:

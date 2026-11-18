@@ -1,0 +1,39 @@
+name: New provider
+description: Ask for (or offer to add) signature verification for another webhook sender
+labels: ["provider", "good first issue"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        See "Add a provider" in CONTRIBUTING.md. Most providers take about 40 lines plus tests.
+  - type: input
+    id: name
+    attributes:
+      label: Provider
+      placeholder: "GitLab, Twilio, Paddle, Svix/Standard Webhooks, ..."
+    validations:
+      required: true
+  - type: input
+    id: docs
+    attributes:
+      label: Link to the provider's signature documentation
+    validations:
+      required: true
+  - type: textarea
+    id: scheme
+    attributes:
+      label: How is the request signed?
+      description: Header names, what is signed (body, timestamp, URL), algorithm, encoding, replay window.
+    validations:
+      required: true
+  - type: textarea
+    id: vector
+    attributes:
+      label: Published test vector (if any)
+      description: Example secret, payload and expected signature from the provider's docs.
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Contribution
+      options:
+        - label: I would like to implement this provider

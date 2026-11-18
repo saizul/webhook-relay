@@ -1,0 +1,74 @@
+# webhook-relay example configuration.
+#
+# Secrets are never written here: `secret_env` names an environment variable
+# that holds the value. Start-up fails if a referenced variable is missing.
+# Validate with:  webhook-relay -c examples/config.yaml check-config
+
+server:
+  database: /data/webhook-relay.db   # SQLite file (env WEBHOOK_RELAY_DATABASE overrides)
+  max_body_bytes: 1048576            # 1 MiB; larger requests get 413
+  api_token_env: WEBHOOK_RELAY_API_TOKEN  # JSON API is disabled when this variable is unset
+  poll_interval: 1.0                 # seconds between checks for due retries
+  concurrency: 4                     # parallel outgoing requests
+
+# Default retry policy; every route and target can override any field.
+retry:
+  max_attempts: 6        # total attempts including the first one
+  initial_backoff: 5     # seconds before the first retry
+  multiplier: 2          # 5s, 10s, 20s, 40s, 80s ...
+  max_backoff: 900       # cap for a single delay
+  jitter: 0.1            # +/- 10% random spread
+  timeout: 10            # per-request timeout in seconds
+  retry_on_4xx: false    # 4xx (except 408, 409, 425, 429) go straight to dead letters
+
+routes:
+  # POST https://hooks.example.com/hooks/github
+  github:
+    provider: github
+    secret_env: GITHUB_WEBHOOK_SECRET
+    targets:
+      - name: ci
+        url: http://ci:8080/github
+      - name: chat-bot
+        url: http://bot:3000/events
+        headers:
+          X-Source: webhook-relay
+        retry:
+          max_attempts: 3
+
+  stripe:
+    provider: stripe
+    secret_env: STRIPE_WEBHOOK_SECRET
+    options:
+      tolerance: 300     # reject signatures older than 5 minutes (0 disables)
+    targets:
+      - name: billing
+        url: http://billing:8000/stripe/events
+        sign_secret_env: RELAY_SIGNING_SECRET   # adds X-Webhook-Relay-Signature: sha256=...
+
+  shopify:
+    provider: shopify
+    secret_env: SHOPIFY_WEBHOOK_SECRET
+    targets:
+      - http://shop-sync:8000/webhooks   # a plain URL is fine too
+
+  slack:
+    provider: slack
+    secret_env: SLACK_SIGNING_SECRET
+    targets:
+      - name: bot
+        url: http://bot:3000/slack
+
+  # Any service that signs the raw body with an HMAC in a header.
+  partner:
+    provider: hmac
+    secret_env: PARTNER_WEBHOOK_SECRET
+    options:
+      header: X-Partner-Signature
+      algorithm: sha256    # sha1, sha256 or sha512
+      encoding: hex        # hex or base64
+      prefix: "sha256="    # stripped before comparing
+    targets:
+      - name: crm
+        url: http://crm:9000/partner
+        forward_headers: [X-Partner-Event]

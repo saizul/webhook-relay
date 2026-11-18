@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+      - name: Ruff
+        run: |
+          ruff check .
+          ruff format --check .
+
+  test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+      - name: Test
+        run: pytest
+      - name: CLI smoke test
+        env:
+          GITHUB_WEBHOOK_SECRET: ci-only
+          STRIPE_WEBHOOK_SECRET: ci-only
+          SHOPIFY_WEBHOOK_SECRET: ci-only
+          SLACK_SIGNING_SECRET: ci-only
+          PARTNER_WEBHOOK_SECRET: ci-only
+          RELAY_SIGNING_SECRET: ci-only
+        run: |
+          webhook-relay --version
+          webhook-relay -c examples/config.yaml check-config
+
+  docker:
+    name: Docker image build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker build -t webhook-relay:ci .
+      - run: docker run --rm webhook-relay:ci --version
+      - name: Start the container and probe /healthz
+        run: |
+          cat > "$RUNNER_TEMP/config.yaml" <<'YAML'
+          routes:
+            ci:
+              provider: hmac
+              secret_env: CI_SECRET
+              targets: ["http://127.0.0.1:9/unused"]
+          YAML
+          docker run -d --name relay -p 8080:8080 -e CI_SECRET=ci-only \
+            -v "$RUNNER_TEMP/config.yaml:/config/config.yaml:ro" webhook-relay:ci
+          for i in $(seq 1 20); do curl -fsS http://127.0.0.1:8080/healthz && exit 0; sleep 1; done
+          docker logs relay
+          exit 1
