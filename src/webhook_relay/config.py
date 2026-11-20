@@ -38,6 +38,7 @@ class RetryPolicy:
     jitter: float = 0.1
     timeout: float = 10.0
     retry_on_4xx: bool = False
+    respect_retry_after: bool = True
 
 
 @dataclass(frozen=True)
@@ -123,6 +124,8 @@ def _retry(data: Any, base: RetryPolicy, where: str) -> RetryPolicy:
         raise ConfigError(f"{where}.jitter: must be between 0 and 1")
     retry_on_4xx = data.get("retry_on_4xx", base.retry_on_4xx)
     _expect(retry_on_4xx, bool, f"{where}.retry_on_4xx")
+    respect_retry_after = data.get("respect_retry_after", base.respect_retry_after)
+    _expect(respect_retry_after, bool, f"{where}.respect_retry_after")
     policy = RetryPolicy(
         max_attempts=max_attempts,
         initial_backoff=_number(data, "initial_backoff", base.initial_backoff, where),
@@ -131,6 +134,7 @@ def _retry(data: Any, base: RetryPolicy, where: str) -> RetryPolicy:
         jitter=jitter,
         timeout=_number(data, "timeout", base.timeout, where, minimum=0.1),
         retry_on_4xx=retry_on_4xx,
+        respect_retry_after=respect_retry_after,
     )
     if policy.max_backoff < policy.initial_backoff:
         raise ConfigError(f"{where}: max_backoff must be >= initial_backoff")

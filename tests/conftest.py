@@ -39,7 +39,7 @@ class Clock:
 class Recorder:
     """httpx MockTransport handler that records requests and replies from a script."""
 
-    def __init__(self, responses: list[int | Exception] | None = None, default: int = 200) -> None:
+    def __init__(self, responses: list[int | Exception | httpx.Response] | None = None, default: int = 200) -> None:
         self.responses = list(responses or [])
         self.default = default
         self.requests: list[httpx.Request] = []
@@ -49,6 +49,8 @@ class Recorder:
         result = self.responses.pop(0) if self.responses else self.default
         if isinstance(result, Exception):
             raise result
+        if isinstance(result, httpx.Response):
+            return httpx.Response(result.status_code, headers=result.headers, request=request)
         return httpx.Response(result, request=request)
 
 

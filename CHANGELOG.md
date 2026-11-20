@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Targets that answer `429` or `503` with a `Retry-After` header (delay in seconds or an
+  HTTP date) are retried after the time they ask for instead of the computed backoff,
+  capped at `max_backoff`. The wait is noted in the job's `last_error`. New
+  `respect_retry_after` retry option (default `true`) at top level, per route or per target.
+
 ## [0.1.0] - 2026-11-18
 
 ### Added

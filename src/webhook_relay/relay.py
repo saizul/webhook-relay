@@ -8,6 +8,7 @@ import logging
 import random
 import time
 from collections.abc import Callable
+from email.utils import parsedate_to_datetime
 
 import httpx
 
@@ -19,6 +20,50 @@ from webhook_relay.store import Job, Store
 log = logging.getLogger("webhook_relay.relay")
 
 RETRYABLE_4XX = frozenset({408, 409, 425, 429})
+# Responses whose ``Retry-After`` header tells us when to come back.
+RETRY_AFTER_CODES = frozenset({429, 503})
+
+
+def parse_retry_after(value: str | None, now: float) -> float | None:
+    """Seconds to wait according to a ``Retry-After`` header, or ``None`` if absent or invalid.
+
+    Both forms from RFC 9110 are accepted: a number of seconds (``120``) and an
+    HTTP date (``Wed, 21 Oct 2026 07:28:00 GMT``). Dates in the past give ``0``.
+    """
+    if value is None:
+        return None
+    value = value.strip()
+    if value.isdigit():
+        return float(value)
+    try:
+        when = parsedate_to_datetime(value)
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
+    if when is None or when.tzinfo is None:
+        return None
+    return max(0.0, when.timestamp() - now)
+
+
+def retry_delay(
+    attempt: int,
+    policy: RetryPolicy,
+    status_code: int | None,
+    retry_after: str | None,
+    now: float,
+    rand: Callable[[], float] = random.random,
+) -> tuple[float, bool]:
+    """Delay before the next attempt and whether it came from the target's ``Retry-After``.
+
+    For ``429`` and ``503`` responses with a valid ``Retry-After`` (and
+    ``respect_retry_after`` on) the target's value is used, capped at
+    ``max_backoff`` so a misbehaving target cannot park a job forever.
+    Otherwise the usual exponential backoff applies.
+    """
+    if policy.respect_retry_after and status_code in RETRY_AFTER_CODES:
+        seconds = parse_retry_after(retry_after, now)
+        if seconds is not None:
+            return min(seconds, policy.max_backoff), True
+    return backoff_delay(attempt, policy, rand), False
 
 
 def backoff_delay(
@@ -119,6 +164,7 @@ class Dispatcher:
         provider, target = found
         headers, body = self.build_request(job, target, provider)
         status_code: int | None = None
+        retry_after: str | None = None
         try:
             response = await self.client.post(target.url, content=body, headers=headers, timeout=target.retry.timeout)
             status_code = response.status_code
@@ -127,12 +173,15 @@ class Dispatcher:
                 log.info("delivery %s -> %s: %s", job.delivery_id, target.name, status_code)
                 return "succeeded"
             error = f"HTTP {status_code}"
+            retry_after = response.headers.get("retry-after")
         except httpx.HTTPError as exc:
             error = f"{type(exc).__name__}: {exc}"[:200] or type(exc).__name__
         attempts = job.attempts + 1
         now = self.clock()
         if attempts < target.retry.max_attempts and is_retryable(status_code, target.retry):
-            delay = backoff_delay(attempts, target.retry, self.rand)
+            delay, from_header = retry_delay(attempts, target.retry, status_code, retry_after, now, self.rand)
+            if from_header:
+                error = f"{error} (Retry-After {delay:g}s)"
             self.store.record_failure(job.id, status_code, error, now, now + delay)
             log.info("delivery %s -> %s: %s, retry %d in %.1fs", job.delivery_id, target.name, error, attempts, delay)
             return "pending"
