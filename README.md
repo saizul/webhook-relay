@@ -47,7 +47,7 @@ that you can inspect and replay.
   the sender gets `202 Accepted`, so nothing is lost when a target is down
 - **Fan-out** to any number of targets per route, each tracked independently
 - **Retries with exponential backoff and jitter**, per-route and per-target policies,
-  smart handling of 4xx vs 5xx responses
+  smart handling of 4xx vs 5xx responses, and `Retry-After` support for rate-limited targets
 - **Dead-letter list** plus **replay** of one delivery, one target or every dead letter
 - **Read-only JSON API** to list and inspect deliveries (bearer token), and a CLI
 - **Optional re-signing** of forwarded requests so targets can trust the relay
@@ -147,6 +147,7 @@ typos fail fast. Run `webhook-relay check-config` to validate it.
 | `jitter` | `0.1` | Random spread as a fraction (0-1) |
 | `timeout` | `10` | Per-request timeout in seconds |
 | `retry_on_4xx` | `false` | Retry every 4xx. By default only 408, 409, 425 and 429 are retried |
+| `respect_retry_after` | `true` | Wait as long as a `429`/`503` response's `Retry-After` asks (capped at `max_backoff`) |
 
 A route's `retry` inherits from the top level and a target's `retry` from its route.
 
@@ -196,6 +197,10 @@ Every forwarded request also carries `X-Webhook-Relay-Delivery` (delivery id),
 4. Network errors, timeouts, `5xx`, `408`, `409`, `425` and `429` are retried after
    `initial_backoff * multiplier^(n-1)` seconds (capped, with jitter). Other `4xx`
    responses go straight to the dead-letter list unless `retry_on_4xx` is on.
+   When a `429` or `503` response carries `Retry-After` (seconds or an HTTP date), the
+   next attempt waits that long instead, capped at `max_backoff`; the job's `last_error`
+   then reads like `HTTP 429 (Retry-After 120s)`. Set `respect_retry_after: false` to
+   always use the computed backoff. `Retry-After` never adds attempts beyond `max_attempts`.
 5. After `max_attempts` the job becomes `dead`. A delivery's status is `pending` while
    any job is pending, `dead` if any job is dead, otherwise `delivered`.
 
@@ -289,7 +294,6 @@ see [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 - [ ] **good first issue** New providers: GitLab (`X-Gitlab-Token`), Twilio, Paddle,
       Standard Webhooks / Svix, Mailgun, Linear, Square, Bitbucket
-- [ ] **good first issue** Honour `Retry-After` from `429`/`503` target responses
 - [ ] **good first issue** Accept several secrets per route for zero-downtime rotation
 - [ ] **good first issue** `server.retention_days` with periodic pruning
 - [ ] **good first issue** Prometheus `/metrics` endpoint (accepted, rejected, delivered, dead)
